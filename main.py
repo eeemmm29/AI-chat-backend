@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
@@ -7,8 +7,28 @@ from typing import List
 import asyncio
 from pydantic import ValidationError
 import socketio
+import firebase_admin
+from firebase_admin import auth, credentials
 
 models.Base.metadata.create_all(bind=database.engine)
+
+# Initialize Firebase Admin
+try:
+    firebase_admin.get_app()
+except ValueError:
+    # Use default credentials or environment variable for production
+    firebase_admin.initialize_app()
+
+async def get_current_user(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    token = authorization.split(" ")[1]
+    try:
+        decoded_token = auth.verify_id_token(token)
+        return decoded_token
+    except Exception as e:
+        print(f"Error verifying token: {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 fastapi_app = FastAPI()
 
