@@ -19,7 +19,7 @@ def setup_db():
 
 @pytest_asyncio.fixture
 async def server():
-    config = uvicorn.Config(app=app, host="127.0.0.1", port=8000, log_level="error")
+    config = uvicorn.Config(app=app, host="127.0.0.1", port=8080, log_level="error")
     server = uvicorn.Server(config)
     task = asyncio.create_task(server.serve())
     await asyncio.sleep(0.5)
@@ -39,7 +39,7 @@ async def test_socketio_send_message(server):
 
     mock_user = {"uid": "user1", "email": "user1@example.com"}
     with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
-        await sio.connect("http://127.0.0.1:8000", auth={"token": "valid_token"})
+        await sio.connect("http://127.0.0.1:8080", auth={"token": "valid_token"})
         # Emitting 'message' without sender (backend should use session UID)
         await sio.emit(
             "message",
@@ -385,8 +385,8 @@ async def test_socketio_typing(server):
 
     with patch("firebase_admin.auth.verify_id_token") as mock_verify:
         mock_verify.side_effect = [mock_user1, mock_user2]
-        await sio1.connect("http://127.0.0.1:8000", auth={"token": "token1"})
-        await sio2.connect("http://127.0.0.1:8000", auth={"token": "token2"})
+        await sio1.connect("http://127.0.0.1:8080", auth={"token": "token1"})
+        await sio2.connect("http://127.0.0.1:8080", auth={"token": "token2"})
 
     await sio1.emit("typing", {"sender": "user1", "recipient": "user2"})
     await asyncio.sleep(0.1)
@@ -414,8 +414,8 @@ async def test_socketio_typing_spoofing(server):
 
     with patch("firebase_admin.auth.verify_id_token") as mock_verify:
         mock_verify.side_effect = [mock_user1, mock_user2]
-        await sio1.connect("http://127.0.0.1:8000", auth={"token": "token1"})
-        await sio2.connect("http://127.0.0.1:8000", auth={"token": "token2"})
+        await sio1.connect("http://127.0.0.1:8080", auth={"token": "token1"})
+        await sio2.connect("http://127.0.0.1:8080", auth={"token": "token2"})
 
     # User 1 attempts to spoof User 3
     await sio1.emit("typing", {"sender": "spoofed_user3", "recipient": "user2"})

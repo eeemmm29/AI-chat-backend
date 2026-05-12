@@ -27,11 +27,11 @@ COPY . .
 
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH"
-ENV PORT=8000
+ENV PORT=8080
 
 # Expose the port (informative)
-EXPOSE 8000
+EXPOSE 8080
 
 # Command to run the application
 # We use the PORT env var for Cloud Run compatibility
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
