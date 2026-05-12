@@ -6,6 +6,8 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
+    firebase_uid = Column(String, unique=True, index=True)
+    email = Column(String, index=True)
 
 class Message(Base):
     __tablename__ = "messages"

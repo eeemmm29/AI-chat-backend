@@ -1,11 +1,15 @@
 from pydantic import BaseModel, ConfigDict
 
-class UserCreate(BaseModel):
+class UserBase(BaseModel):
     username: str
+    firebase_uid: str | None = None
+    email: str | None = None
 
-class User(BaseModel):
+class UserCreate(UserBase):
+    pass
+
+class User(UserBase):
     id: int
-    username: str
 
     model_config = ConfigDict(from_attributes=True)
 
