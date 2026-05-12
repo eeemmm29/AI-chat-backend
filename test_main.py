@@ -6,6 +6,7 @@ import models, database
 import asyncio
 import uvicorn
 import socketio
+from unittest.mock import patch
 
 @pytest.fixture(autouse=True)
 def setup_db():
@@ -52,6 +53,33 @@ async def test_register_user():
         response = await ac.post("/users/register", json={"username": "testuser"})
     assert response.status_code == 200
     assert response.json() == {"id": 1, "username": "testuser"}
+
+@pytest.mark.asyncio
+async def test_read_users_me_success():
+    mock_user = {"uid": "testuser", "email": "test@example.com"}
+    with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get("/users/me", headers={"Authorization": "Bearer valid_token"})
+    
+    assert response.status_code == 200
+    assert response.json() == mock_user
+
+@pytest.mark.asyncio
+async def test_read_users_me_no_header():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/users/me")
+    
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Missing or invalid token"
+
+@pytest.mark.asyncio
+async def test_read_users_me_invalid_token():
+    with patch("firebase_admin.auth.verify_id_token", side_effect=Exception("Invalid token")):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get("/users/me", headers={"Authorization": "Bearer invalid_token"})
+    
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid token"
 
 @pytest.mark.asyncio
 async def test_get_users():
