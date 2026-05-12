@@ -32,6 +32,10 @@ async def get_current_user(authorization: str = Header(None)):
 
 fastapi_app = FastAPI()
 
+@fastapi_app.get("/users/me")
+async def read_users_me(current_user: dict = Depends(get_current_user)):
+    return current_user
+
 @fastapi_app.post("/users/register", response_model=schemas.User)
 def register_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
     db_user = models.User(username=user.username)
