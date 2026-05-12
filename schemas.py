@@ -17,6 +17,7 @@ class MessageCreate(BaseModel):
     sender: str
     recipient: str
     content: str
+    timestamp: str
 
 class Message(BaseModel):
     id: int

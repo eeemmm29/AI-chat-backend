@@ -48,13 +48,6 @@ async def test_socketio_send_message(server):
     await sio.disconnect()
 
 @pytest.mark.asyncio
-async def test_register_user():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.post("/users/register", json={"username": "testuser"})
-    assert response.status_code == 200
-    assert response.json() == {"id": 1, "username": "testuser"}
-
-@pytest.mark.asyncio
 async def test_read_users_me_success():
     mock_user = {"uid": "testuser", "email": "test@example.com"}
     with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
@@ -82,31 +75,91 @@ async def test_read_users_me_invalid_token():
     assert response.json()["detail"] == "Invalid token"
 
 @pytest.mark.asyncio
+async def test_sync_new_user():
+    mock_user = {"uid": "new_uid", "email": "new@example.com", "name": "New User"}
+    with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post("/users/sync", headers={"Authorization": "Bearer valid_token"})
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["firebase_uid"] == "new_uid"
+    assert data["email"] == "new@example.com"
+    assert data["username"] == "New User"
+
+@pytest.mark.asyncio
+async def test_sync_existing_user_update():
+    # First create user
+    db = database.SessionLocal()
+    user = models.User(username="Old Name", firebase_uid="existing_uid", email="old@example.com")
+    db.add(user)
+    db.commit()
+    db.close()
+
+    mock_user = {"uid": "existing_uid", "email": "new@example.com", "name": "New Name"}
+    with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post("/users/sync", headers={"Authorization": "Bearer valid_token"})
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["firebase_uid"] == "existing_uid"
+    assert data["email"] == "new@example.com"
+    assert data["username"] == "New Name"
+
+@pytest.mark.asyncio
 async def test_get_users():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        await ac.post("/users/register", json={"username": "user1"})
-        await ac.post("/users/register", json={"username": "user2"})
-        
-        response = await ac.get("/users")
+    db = database.SessionLocal()
+    u1 = models.User(username="user1", firebase_uid="uid1")
+    u2 = models.User(username="user2", firebase_uid="uid2")
+    db.add_all([u1, u2])
+    db.commit()
+    db.close()
+
+    mock_user = {"uid": "testuser", "email": "test@example.com"}
+    with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            headers = {"Authorization": "Bearer valid_token"}
+            response = await ac.get("/users", headers=headers)
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 2
-    assert data[0]["username"] == "user1"
-    assert data[1]["username"] == "user2"
+    usernames = {u["username"] for u in data}
+    assert usernames == {"user1", "user2"}
 
 @pytest.mark.asyncio
 async def test_search_users():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        await ac.post("/users/register", json={"username": "alice"})
-        await ac.post("/users/register", json={"username": "bob"})
-        await ac.post("/users/register", json={"username": "charlie"})
-        
-        response = await ac.get("/users/search?query=li")
+    db = database.SessionLocal()
+    u1 = models.User(username="alice", firebase_uid="uid_a")
+    u2 = models.User(username="bob", firebase_uid="uid_b")
+    u3 = models.User(username="charlie", firebase_uid="uid_c")
+    db.add_all([u1, u2, u3])
+    db.commit()
+    db.close()
+
+    mock_user = {"uid": "testuser", "email": "test@example.com"}
+    with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            headers = {"Authorization": "Bearer valid_token"}
+            response = await ac.get("/users/search?query=li", headers=headers)
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 2
     users = {u["username"] for u in data}
     assert users == {"alice", "charlie"}
+
+@pytest.mark.asyncio
+async def test_sync_user_no_email_no_name():
+    mock_user = {"uid": "uid_only"}
+    with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post("/users/sync", headers={"Authorization": "Bearer valid_token"})
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["firebase_uid"] == "uid_only"
+    assert data["email"] is None
+    assert data["username"] == "user_uid_only"
 
 @pytest.mark.asyncio
 async def test_get_messages():
@@ -118,8 +171,10 @@ async def test_get_messages():
     db.commit()
     db.close()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.get("/messages")
+    mock_user = {"uid": "testuser", "email": "test@example.com"}
+    with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get("/messages", headers={"Authorization": "Bearer valid_token"})
     
     assert response.status_code == 200
     data = response.json()
@@ -137,8 +192,10 @@ async def test_get_messages_history():
     db.commit()
     db.close()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.get("/messages/history/user1")
+    mock_user = {"uid": "testuser", "email": "test@example.com"}
+    with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get("/messages/history/user1", headers={"Authorization": "Bearer valid_token"})
     
     assert response.status_code == 200
     data = response.json()
@@ -156,8 +213,10 @@ async def test_search_messages():
     db.commit()
     db.close()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.get("/messages/search?query=there")
+    mock_user = {"uid": "testuser", "email": "test@example.com"}
+    with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get("/messages/search?query=there", headers={"Authorization": "Bearer valid_token"})
     
     assert response.status_code == 200
     data = response.json()
@@ -175,8 +234,10 @@ async def test_get_messages_conversation():
     db.commit()
     db.close()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.get("/messages/conversation/user1/user2")
+    mock_user = {"uid": "testuser", "email": "test@example.com"}
+    with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get("/messages/conversation/user1/user2", headers={"Authorization": "Bearer valid_token"})
     
     assert response.status_code == 200
     data = response.json()

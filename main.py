@@ -36,38 +36,58 @@ fastapi_app = FastAPI()
 async def read_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
 
-@fastapi_app.post("/users/register", response_model=schemas.User)
-def register_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
-    db_user = models.User(username=user.username)
-    try:
-        db.add(db_user)
+@fastapi_app.post("/users/sync", response_model=schemas.User)
+async def sync_user(current_user: dict = Depends(get_current_user), db: Session = Depends(database.get_db)):
+    email = current_user.get("email")
+    name = current_user.get("name")
+    uid = current_user["uid"]
+    
+    # Fallback logic
+    if not name:
+        if email:
+            name = email.split("@")[0]
+        else:
+            name = f"user_{uid[:8]}"
+            
+    db_user = db.query(models.User).filter(models.User.firebase_uid == uid).first()
+    if db_user:
+        # Update email and username if they changed
+        db_user.email = email
+        db_user.username = name
         db.commit()
         db.refresh(db_user)
         return db_user
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    new_user = models.User(
+        username=name,
+        firebase_uid=uid,
+        email=email
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
 
 @fastapi_app.get("/users", response_model=List[schemas.User])
-def get_users(db: Session = Depends(database.get_db)):
+def get_users(db: Session = Depends(database.get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.User).all()
 
 @fastapi_app.get("/users/search", response_model=List[schemas.User])
-def search_users(query: str, db: Session = Depends(database.get_db)):
+def search_users(query: str, db: Session = Depends(database.get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.User).filter(models.User.username.contains(query)).all()
 
 @fastapi_app.get("/messages", response_model=List[schemas.Message])
-def get_messages(db: Session = Depends(database.get_db)):
+def get_messages(db: Session = Depends(database.get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.Message).all()
 
 @fastapi_app.get("/messages/history/{user_id}", response_model=List[schemas.Message])
-def get_messages_history(user_id: str, db: Session = Depends(database.get_db)):
+def get_messages_history(user_id: str, db: Session = Depends(database.get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.Message).filter(
         or_(models.Message.sender == user_id, models.Message.recipient == user_id)
     ).all()
 
 @fastapi_app.get("/messages/conversation/{user1_id}/{user2_id}", response_model=List[schemas.Message])
-def get_messages_conversation(user1_id: str, user2_id: str, db: Session = Depends(database.get_db)):
+def get_messages_conversation(user1_id: str, user2_id: str, db: Session = Depends(database.get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.Message).filter(
         or_(
             and_(models.Message.sender == user1_id, models.Message.recipient == user2_id),
@@ -76,7 +96,7 @@ def get_messages_conversation(user1_id: str, user2_id: str, db: Session = Depend
     ).all()
 
 @fastapi_app.get("/messages/search", response_model=List[schemas.Message])
-def search_messages(query: str, db: Session = Depends(database.get_db)):
+def search_messages(query: str, db: Session = Depends(database.get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.Message).filter(models.Message.content.contains(query)).all()
 
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
