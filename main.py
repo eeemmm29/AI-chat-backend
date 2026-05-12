@@ -102,8 +102,17 @@ def search_messages(query: str, db: Session = Depends(database.get_db), current_
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
 
 @sio.event
-async def connect(sid, environ):
-    print(f"connect {sid}")
+async def connect(sid, environ, auth):
+    if not auth or 'token' not in auth:
+        print(f"connect {sid} rejected: No token")
+        return False
+    try:
+        decoded_token = firebase_admin.auth.verify_id_token(auth['token'])
+        await sio.save_session(sid, {'user': decoded_token})
+        print(f"connect {sid} (user: {decoded_token['uid']})")
+    except Exception as e:
+        print(f"connect {sid} rejected: {e}")
+        return False
 
 @sio.event
 async def disconnect(sid):
@@ -111,13 +120,36 @@ async def disconnect(sid):
 
 @sio.event
 async def typing(sid, data):
+    session = await sio.get_session(sid)
+    user = session.get("user")
+    if not user:
+        return
+    
+    # Security: Override sender with UID from session
+    data['sender'] = user['uid']
     await sio.emit('typing', data, skip_sid=sid)
 
-@sio.event
-async def send_message(sid, data):
+@sio.on("message")
+async def handle_message(sid, data):
+    session = await sio.get_session(sid)
+    user = session.get("user")
+    if not user:
+        print(f"Unauthorized message from {sid}")
+        return
+
+    # Security: Override sender with UID from session
+    data['sender'] = user['uid']
+    
+    # Handle potential field name differences between frontend and backend
+    if 'text' in data and 'content' not in data:
+        data['content'] = data['text']
+    if 'recipient' not in data:
+        data['recipient'] = 'general'
+
     try:
         msg = schemas.MessageCreate(**data)
-    except ValidationError:
+    except ValidationError as e:
+        print(f"Validation error: {e}")
         return
 
     db = database.SessionLocal()

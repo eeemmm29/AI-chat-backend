@@ -32,19 +32,24 @@ async def test_socketio_send_message(server):
     @sio.on('receive_message')
     async def on_receive_message(data):
         messages.append(data)
-        
-    await sio.connect('http://127.0.0.1:8000')
-    await sio.emit('send_message', {'sender': 'user1', 'recipient': 'user2', 'content': 'hello ws', 'timestamp': '2023-01-01T10:00:00'})
-    await asyncio.sleep(0.1)
+    
+    mock_user = {"uid": "user1", "email": "user1@example.com"}
+    with patch("firebase_admin.auth.verify_id_token", return_value=mock_user):
+        await sio.connect('http://127.0.0.1:8000', auth={'token': 'valid_token'})
+        # Emitting 'message' without sender (backend should use session UID)
+        await sio.emit('message', {'recipient': 'user2', 'content': 'hello ws', 'timestamp': '2023-01-01T10:00:00'})
+        await asyncio.sleep(0.1)
     
     assert len(messages) == 1
     assert messages[0]['content'] == 'hello ws'
+    assert messages[0]['sender'] == 'user1' # Verified sender integrity
     
     db = database.SessionLocal()
     db_messages = db.query(models.Message).all()
     db.close()
     assert len(db_messages) == 1
     assert db_messages[0].content == 'hello ws'
+    assert db_messages[0].sender == 'user1'
     await sio.disconnect()
 
 @pytest.mark.asyncio
@@ -254,15 +259,49 @@ async def test_socketio_typing(server):
     @sio2.on('typing')
     async def on_typing(data):
         events.append(data)
-        
-    await sio1.connect('http://127.0.0.1:8000')
-    await sio2.connect('http://127.0.0.1:8000')
+    
+    mock_user1 = {"uid": "user1", "email": "user1@example.com"}
+    mock_user2 = {"uid": "user2", "email": "user2@example.com"}
+    
+    with patch("firebase_admin.auth.verify_id_token") as mock_verify:
+        mock_verify.side_effect = [mock_user1, mock_user2]
+        await sio1.connect('http://127.0.0.1:8000', auth={'token': 'token1'})
+        await sio2.connect('http://127.0.0.1:8000', auth={'token': 'token2'})
     
     await sio1.emit('typing', {'sender': 'user1', 'recipient': 'user2'})
     await asyncio.sleep(0.1)
     
     assert len(events) == 1
     assert events[0]['sender'] == 'user1'
+    
+    await sio1.disconnect()
+    await sio2.disconnect()
+
+@pytest.mark.asyncio
+async def test_socketio_typing_spoofing(server):
+    sio1 = socketio.AsyncClient()
+    sio2 = socketio.AsyncClient()
+    
+    events = []
+    @sio2.on('typing')
+    async def on_typing(data):
+        events.append(data)
+    
+    mock_user1 = {"uid": "real_user1", "email": "user1@example.com"}
+    mock_user2 = {"uid": "user2", "email": "user2@example.com"}
+    
+    with patch("firebase_admin.auth.verify_id_token") as mock_verify:
+        mock_verify.side_effect = [mock_user1, mock_user2]
+        await sio1.connect('http://127.0.0.1:8000', auth={'token': 'token1'})
+        await sio2.connect('http://127.0.0.1:8000', auth={'token': 'token2'})
+    
+    # User 1 attempts to spoof User 3
+    await sio1.emit('typing', {'sender': 'spoofed_user3', 'recipient': 'user2'})
+    await asyncio.sleep(0.1)
+    
+    assert len(events) == 1
+    # This should FAIL initially because the backend currently just broadcasts the raw data
+    assert events[0]['sender'] == 'real_user1' 
     
     await sio1.disconnect()
     await sio2.disconnect()
