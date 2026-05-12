@@ -1,37 +1,32 @@
-# Use the official uv image for build
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
-
-# Set the working directory
-WORKDIR /app
-
-# Enable bytecode compilation
-ENV UV_COMPILE_BYTECODE=1
-
-# Copy project files
-COPY pyproject.toml uv.lock ./
-
-# Install dependencies
-RUN uv sync --frozen --no-dev
-
-# Final runtime image
+# syntax=docker/dockerfile:1.7-labs
 FROM python:3.13-slim-bookworm
 
-# Set the working directory
+# 1. Install system dependencies for building C extensions (like for some DB drivers)
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt \
+    apt-get update && apt-get install -y gcc python3-dev && rm -rf /var/lib/apt/lists/*
+
+# 2. Grab the uv binary (this is the magic part)
+COPY --from=ghcr.io/astral-sh/uv:0.11.1 /uv /uvx /bin/
+
 WORKDIR /app
 
-# Copy the environment from the builder
-COPY --from=builder /app/.venv /app/.venv
+# 3. Optimization: Cache the uv layers
+ENV UV_LINK_MODE=copy
+ENV UV_COMPILE_BYTECODE=1
 
-# Copy application source code
+# 4. Install dependencies first for better Docker layer caching
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
+
+# 5. Copy your code and do the final sync
 COPY . .
+RUN uv sync --frozen --no-dev
 
-# Set environment variables
-ENV PATH="/app/.venv/bin:$PATH"
+# 6. Runtime config
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 ENV PORT=8080
 
-# Expose the port (informative)
-EXPOSE 8080
-
-# Command to run the application
-# We use the PORT env var for Cloud Run compatibility
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# 7. The 'uv run' command handles the virtualenv paths for you
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
